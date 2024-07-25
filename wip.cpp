@@ -1,75 +1,57 @@
 #include <Arduino.h>
 
-// Pin definitions
-const int hallSensorPin = PA0; // Pin connected to Hall Effect sensor
-const int relayPin = PA1;      // Pin connected to relay
-
-// Constants
-const long wheelCircumferenceMM = 1750; // Wheel circumference in millimeters
-int pulsesPerRevolution = 1;            // Number of magnets on the wheel
-const int speedTriggerMMPerS = 1389;    // Speed to trigger the relay in mm/s (30 km/h = 30000 m/h = 8333 mm/s)
-// 5 km/h = 1389 mm/s
+#define HALL_SENSOR PB9
+#define LIMIT_TRIGGER PA4  // Triggers LOW relay 2ph63083a, flipped High/Low logic
 
 // Variables
-volatile int pulseCount = 0; // Counts the number of pulses
+volatile unsigned long pulseCount = 0; // Counts the number of pulses
+const int rpmThreshold = 500; // Example threshold for RPM
+const int pulsesPerRevolution = 1; // Number of pulses per revolution (adjust as necessary)
 unsigned long previousMillis = 0;
-const unsigned long interval = 1000; // Update speed every second
+const unsigned long interval = 1000; // 1 second interval for RPM calculation
+const unsigned long limitOnDuration = 5000; // limit on duration in milliseconds (5 seconds)
+unsigned long limitOnStartTime = 0;
 
 // Function declarations
 void countPulse();
-long calculateSpeed();
-void setPulsesPerRevolution(int pulses);
+void controlLedLimit(unsigned long rpm);
 
 void setup() {
-    Serial.begin(9600);
-    pinMode(hallSensorPin, INPUT);
-    pinMode(relayPin, OUTPUT);
-    attachInterrupt(digitalPinToInterrupt(hallSensorPin), countPulse, RISING);
+  pinMode(HALL_SENSOR, INPUT);
+  pinMode(LIMIT_TRIGGER, OUTPUT);
+  // Ensure the LEDs start off
+  digitalWrite(LIMIT_TRIGGER, HIGH);
+  attachInterrupt(digitalPinToInterrupt(HALL_SENSOR), countPulse, RISING);
 }
 
 void loop() {
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= interval) {
-        previousMillis = currentMillis;
+  unsigned long currentMillis = millis();
 
-        // Calculate speed in mm/s
-        long speedMMPerS = calculateSpeed();
-        Serial.print("Speed: ");
-        Serial.print(speedMMPerS * 3.6 / 1000); // Convert mm/s to km/h for display
-        Serial.println(" km/h");
+  // Calculate RPM every second
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
 
-        // Check if speed exceeds trigger value
-        if (speedMMPerS >= speedTriggerMMPerS) {
-            // digitalWrite(relayPin, HIGH); // Turn on relay
-            digitalWrite(LED_BUILTIN, HIGH);
+    // Calculate RPM using integer math
+    unsigned long pulses = pulseCount;
+    pulseCount = 0; // Reset pulse count after reading
+    unsigned long rpm = (pulses * 60UL) / pulsesPerRevolution;
 
-        } else {
-            // digitalWrite(relayPin, LOW);  // Turn off relay
-            digitalWrite(LED_BUILTIN, LOW);
-        }
-
-        // Reset pulse count for next interval
-        pulseCount = 0;
-
-        // initialize LED digital pin as an output.
-        pinMode(LED_BUILTIN, OUTPUT);
-    }
+    // Control LED based on RPM
+    controlLedLimit(rpm);
+  }
 }
 
-// Interrupt service routine to count pulses
 void countPulse() {
-    pulseCount++;
+  pulseCount++;
 }
 
-// Function to calculate speed in mm/s
-long calculateSpeed() {
-    long distancePerPulseMM = wheelCircumferenceMM / pulsesPerRevolution; // Distance per pulse in mm
-    long distanceTravelledMM = distancePerPulseMM * pulseCount;           // Total distance travelled in mm
-    long speedMMPerS = distanceTravelledMM / (interval / 1000);           // Speed in mm/s
-    return speedMMPerS;
-}
+void controlLedLimit(unsigned long rpm) {
+  unsigned long currentMillis = millis();
 
-// Function to set pulses per revolution
-void setPulsesPerRevolution(int pulses) {
-    pulsesPerRevolution = pulses;
+  if (rpm >= rpmThreshold) {
+    digitalWrite(LIMIT_TRIGGER, LOW);
+    limitOnStartTime = currentMillis;
+  } else if (currentMillis - limitOnStartTime >= limitOnDuration) {
+    digitalWrite(LIMIT_TRIGGER, HIGH);
+  }
 }
